@@ -59,7 +59,7 @@ import java.util.regex.Pattern;
 public class EditorCore extends LinearLayout implements View.OnTouchListener {
     public static final String TAG = "EDITOR";
     private EditorListener listener;
-    public final int MAP_MARKER_REQUEST = 20;
+    private final int MAP_MARKER_REQUEST = 20;
     public final int PICK_IMAGE_REQUEST = 1;
     private InputExtensions inputExtensions;
     private ImageExtensions imageExtensions;
@@ -445,6 +445,7 @@ public class EditorCore extends LinearLayout implements View.OnTouchListener {
             case h2:
             case h3:
             case p:
+            case blockquote:
                 inputExtensions.buildNodeFromHTML(element);
                 break;
             case ul:
@@ -458,6 +459,8 @@ public class EditorCore extends LinearLayout implements View.OnTouchListener {
                 String dataTag = element.attr("data-tag");
                 if (dataTag.equals("img")) {
                     imageExtensions.buildNodeFromHTML(element);
+                }else{
+                    inputExtensions.buildNodeFromHTML(element);
                 }
                 break;
 

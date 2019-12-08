@@ -21,7 +21,10 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
+import android.support.annotation.DrawableRes;
+import android.support.annotation.Nullable;
 import android.text.Editable;
 import android.text.Html;
 import android.text.TextUtils;
@@ -33,22 +36,25 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.load.engine.GlideException;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
+import com.bumptech.glide.request.RequestListener;
+import com.bumptech.glide.request.RequestOptions;
+import com.bumptech.glide.request.target.Target;
 import com.github.irshulx.EditorComponent;
 import com.github.irshulx.EditorCore;
+import com.github.irshulx.GlideApp;
 import com.github.irshulx.R;
 import com.github.irshulx.models.EditorContent;
 import com.github.irshulx.models.EditorControl;
-import com.github.irshulx.models.EditorTextStyle;
 import com.github.irshulx.models.EditorType;
 import com.github.irshulx.models.HtmlTag;
 import com.github.irshulx.models.Node;
 import com.github.irshulx.models.RenderType;
 import com.github.irshulx.models.TextSettings;
-import com.squareup.picasso.Picasso;
-
 import org.jsoup.nodes.Element;
-
-import java.io.InputStream;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -62,6 +68,14 @@ import java.util.UUID;
 public class ImageExtensions extends EditorComponent {
     private EditorCore editorCore;
     private int editorImageLayout = R.layout.tmpl_image_view;
+    public RequestListener requestListener;
+    public RequestOptions requestOptions;
+    public DrawableTransitionOptions transition;
+
+    @DrawableRes
+    public int placeholder = -1;
+    @DrawableRes
+    public int errorBackground = -1;
 
     @Override
     public Node getContent(View view) {
@@ -119,8 +133,12 @@ public class ImageExtensions extends EditorComponent {
             }
         }else {
             String src = element.attr("src");
-            Element descTag = element.child(1);
-            loadImage(src, descTag);
+            if(element.children().size() > 0) {
+                Element descTag = element.child(1);
+                loadImage(src, descTag);
+            }else{
+                loadImageRemote(src, null);
+            }
         }
         return null;
     }
@@ -141,10 +159,8 @@ public class ImageExtensions extends EditorComponent {
 
     public void openImageGallery() {
         Intent intent = new Intent();
-// Show only images, no videos or anything else
         intent.setType("image/*");
         intent.setAction(Intent.ACTION_GET_CONTENT);
-        // Always show the chooser (if there are multiple options available)
         ((Activity) editorCore.getContext()).startActivityForResult(Intent.createChooser(intent, "Select an image"), editorCore.PICK_IMAGE_REQUEST);
     }
 
@@ -158,7 +174,7 @@ public class ImageExtensions extends EditorComponent {
         final TextView lblStatus =  childLayout.findViewById(R.id.lblStatus);
         final CustomEditText desc = childLayout.findViewById(R.id.desc);
         if(!TextUtils.isEmpty(url)){
-            Picasso.with(editorCore.getContext()).load(url).into(imageView);
+            loadImageUsingLib(url, imageView);
         }else {
             imageView.setImageBitmap(image);
         }
@@ -257,47 +273,90 @@ public class ImageExtensions extends EditorComponent {
       /used by the renderer to render the image from the Node
     */
     public void loadImage(String _path, Node node) {
-        final View childLayout = ((Activity) editorCore.getContext()).getLayoutInflater().inflate(this.editorImageLayout, null);
-        ImageView imageView = childLayout.findViewById(R.id.imageView);
-        CustomEditText text = childLayout.findViewById(R.id.desc);
-
-        childLayout.setTag(createImageTag(_path));
-        text.setTag(createSubTitleTag());
-
         String desc = node.content.get(0);
-
-        if (TextUtils.isEmpty(desc)) {
-            text.setVisibility(View.GONE);
-        } else {
-            componentsWrapper.getInputExtensions().setText(text, desc);
-            text.setEnabled(false);
+        final View childLayout = loadImageRemote(_path, desc);
+        CustomEditText text = childLayout.findViewById(R.id.desc);
+        if (!TextUtils.isEmpty(desc)) {
             componentsWrapper.getInputExtensions().applyTextSettings(node, text);
         }
-        Picasso.with(this.editorCore.getContext()).load(_path).into(imageView);
-        editorCore.getParentView().addView(childLayout);
     }
 
     public void loadImage(String _path, Element node) {
+        String desc = null;
+        if(node != null) {
+            desc = node.html();
+        }
+        final View childLayout = loadImageRemote(_path, desc);
+        CustomEditText text = childLayout.findViewById(R.id.desc);
+        if(node != null) {
+            componentsWrapper.getInputExtensions().applyStyles(text, node);
+        }
+    }
 
+    public View loadImageRemote(String _path, String desc){
         final View childLayout = ((Activity) editorCore.getContext()).getLayoutInflater().inflate(this.editorImageLayout, null);
         ImageView imageView = childLayout.findViewById(R.id.imageView);
         CustomEditText text = childLayout.findViewById(R.id.desc);
 
         childLayout.setTag(createImageTag(_path));
         text.setTag(createSubTitleTag());
-
-        String desc = node.html();
-
-        if (TextUtils.isEmpty(desc)) {
-            text.setVisibility(View.GONE);
-        } else {
+        if(!TextUtils.isEmpty(desc)) {
             componentsWrapper.getInputExtensions().setText(text, desc);
-            text.setEnabled(false);
-           // editorCore.getInputExtensions().applyTextSettings(node, text);
         }
-        Picasso.with(this.editorCore.getContext()).load(_path).into(imageView);
+        text.setEnabled(editorCore.getRenderType() == RenderType.Editor);
+        loadImageUsingLib(_path, imageView);
         editorCore.getParentView().addView(childLayout);
-        componentsWrapper.getInputExtensions().applyStyles(text, node);
+
+        if(editorCore.getRenderType()== RenderType.Editor) {
+            BindEvents(childLayout);
+        }
+
+        return childLayout;
+    }
+
+
+    public void loadImageUsingLib(String path, ImageView imageView){
+        if(requestListener == null){
+            requestListener = new RequestListener<Drawable>() {
+                @Override
+                public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
+                    return false;
+                }
+
+                @Override
+                public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
+                    return false;
+                }
+            };
+        }
+
+
+        if(placeholder == -1){
+            placeholder = R.drawable.image_placeholder;
+        }
+
+        if(errorBackground == -1){
+            errorBackground = R.drawable.error_background;
+        }
+
+        if(requestOptions == null) {
+            requestOptions = new RequestOptions();
+        }
+
+        requestOptions.placeholder(placeholder);
+        requestOptions.error(errorBackground);
+
+        if(transition == null){
+            transition = DrawableTransitionOptions.withCrossFade().crossFade(1000);
+        }
+        GlideApp.with(imageView.getContext())
+                .load(path)
+                .transition(transition)
+                .fitCenter()
+                .diskCacheStrategy(DiskCacheStrategy.ALL)   //No disk cache
+                .listener(requestListener)
+                .apply(requestOptions)
+                .into(imageView);
     }
 
 
